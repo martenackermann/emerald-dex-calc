@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# EmeraldDex — ROM-hack dex, save reader & damage calculator
 
-## Getting Started
+A Next.js + shadcn/ui web app for a [pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-expansion) ROM hack. It:
 
-First, run the development server:
+- **Reads your `.sav`** entirely in the browser (nothing is uploaded) and shows your **team & PC boxes** with natures, abilities, held items, moves, IVs and EVs.
+- Ships a **Pokédex** that mirrors *every data change in the ROM hack* — species, base stats, types, abilities, learnsets and evolutions are extracted straight from the decomp source.
+- Has a **damage calculator** — your team vs. any Pokémon, using your mons' real IVs/EVs/nature.
+- Does **randomizer analysis** — for species you own, the dex overlays the natures, abilities and moves actually rolled in your save.
+
+Companion ROM hack repo: **[martenackermann/pokeemerald-expansion](https://github.com/martenackermann/pokeemerald-expansion)**.
+
+## How the data stays in sync with the ROM hack
+
+The decomp is the single source of truth. `scripts/extract-data.mjs` parses the hack's C data files (`species_info/`, `moves_info.h`, `abilities.h`, `items.h`, learnsets, constants) into versioned JSON in `public/data/`. Re-run it whenever the hack's data changes:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+ROMHACK_PATH=/path/to/pokeemerald-expansion npm run extract
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`public/data/meta.json` records the exact decomp commit the data was generated from.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Save format
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The parser targets the **pokeemerald-expansion** save layout (bit-exact, from `include/pokemon.h` / `include/save.h` / `include/global.h`):
 
-## Learn More
+- Sector container, active-slot selection by save counter, checksum validation
+- Party at `SaveBlock1 +0x238`, boxes at `PokemonStorage +0x0001`
+- Gen-3 encryption (XOR `PID ^ OTID`, personality-shuffled substructs) with expansion's widened bitfields (11-bit species/moves, 10-bit items, explicit hidden-nature field, `abilityNum`)
 
-To learn more about Next.js, take a look at the following resources:
+> Vanilla Emerald saves share the container + party layout, so those decode too — but vanilla aligns box data at `+0x0004`, so PC boxes only read correctly from an actual expansion save.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Develop
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm install
+npm run extract      # generate public/data from the decomp (set ROMHACK_PATH)
+npm run dev          # http://localhost:3000
+npm test             # parser unit tests (fixture round-trip)
+```
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Built with Next.js 16 (App Router), Tailwind v4, shadcn/ui. Fully static — deploy to Vercel or any static host.
