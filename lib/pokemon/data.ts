@@ -21,6 +21,8 @@ export interface Species {
   types: string[];
   abilities: (string | null)[];
   abilityList: string[];
+  regularAbilities: string[];
+  hiddenAbility: string | null;
   baseStats: BaseStats;
   growthRate: string;
   genderFemale: number | null;
@@ -29,7 +31,7 @@ export interface Species {
   height: number;
   weight: number;
   description: string | null;
-  evolutions: { method: string; param: string; to: number | null; toName: string }[];
+  evolutions: { method: string; to: number | null; toName: string; requirement: string }[];
   learnset: number[];
 }
 
@@ -65,7 +67,7 @@ export interface GameData {
   species: Species[];
   speciesById: Map<number, Species>;
   moveById: Map<number, Move>;
-  abilityById: Map<number, { id: number; name: string }>;
+  abilityById: Map<number, { id: number; name: string; description?: string }>;
   itemById: Map<number, { id: number; name: string }>;
   natures: Nature[];
 }
@@ -85,7 +87,7 @@ export function loadGameData(): Promise<GameData> {
       j<Meta>("meta.json"),
       j<Species[]>("species.json"),
       j<Record<string, Move>>("moves.json"),
-      j<Record<string, { id: number; name: string }>>("abilities.json"),
+      j<Record<string, { id: number; name: string; description?: string }>>("abilities.json"),
       j<Record<string, { id: number; name: string }>>("items.json"),
       j<Nature[]>("natures.json"),
     ]);
@@ -139,6 +141,47 @@ export function resolveMon(m: DecodedMon, d: GameData): ResolvedMon {
     isShiny: m.isShiny,
     isEgg: m.isEgg,
   };
+}
+
+export function spriteUrl(speciesId: number): string {
+  return `/sprites/${speciesId}.png`;
+}
+
+/** Look up an ability's display name + description by its ability id. */
+export function abilityInfo(d: GameData, abilityId: number | null | undefined) {
+  if (abilityId == null) return undefined;
+  return d.abilityById.get(abilityId);
+}
+
+// --- Trainers (loaded lazily; only the calculator needs them) ---------------
+
+export interface TrainerMon {
+  species: number;
+  level: number;
+  ability: number | null;
+  item: number | null;
+  moves: number[];
+  nature: number;
+  shiny: boolean;
+}
+
+export interface Trainer {
+  id: string;
+  name: string;
+  trainerClass: string;
+  pic: string;
+  double: boolean;
+  party: TrainerMon[];
+}
+
+let trainerCache: Promise<Trainer[]> | null = null;
+export function loadTrainers(): Promise<Trainer[]> {
+  if (trainerCache) return trainerCache;
+  trainerCache = fetch("/data/trainers.json").then((r) => {
+    if (!r.ok) throw new Error(`Failed to load trainers.json (${r.status})`);
+    return r.json();
+  });
+  return trainerCache;
 }
 
 export function natureLabel(n: Nature): string {

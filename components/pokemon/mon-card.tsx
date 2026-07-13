@@ -3,6 +3,7 @@
 import { Sparkles, Egg } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { TypeBadge } from "@/components/pokemon/type-badge";
+import { Sprite } from "@/components/pokemon/sprite";
 import { natureLabel, type ResolvedMon } from "@/lib/pokemon/data";
 import { cn } from "@/lib/utils";
 
@@ -18,8 +19,13 @@ export function MonCard({ mon }: { mon: ResolvedMon }) {
   const ivTotal = iv.hp + iv.atk + iv.def + iv.spa + iv.spd + iv.spe;
   return (
     <Card className="gap-0 overflow-hidden p-0">
-      <div className="flex items-start justify-between gap-2 border-b border-border/60 bg-muted/30 p-3">
-        <div className="min-w-0">
+      <div className="flex items-start gap-2 border-b border-border/60 bg-muted/30 p-3">
+        {mon.species && (
+          <div className="shrink-0 rounded-lg bg-background/50 ring-1 ring-border">
+            <Sprite speciesId={mon.species.id} alt={mon.speciesName} size={48} />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate font-semibold">{mon.displayName}</span>
             {mon.isShiny && <Sparkles className="size-3.5 shrink-0 text-yellow-400" />}
@@ -28,11 +34,11 @@ export function MonCard({ mon }: { mon: ResolvedMon }) {
           <div className="truncate text-xs text-muted-foreground">
             {mon.speciesName} · Lv {mon.level}
           </div>
-        </div>
-        <div className="flex shrink-0 flex-wrap justify-end gap-1">
-          {mon.types.map((t) => (
-            <TypeBadge key={t} type={t} />
-          ))}
+          <div className="mt-1 flex flex-wrap gap-1">
+            {mon.types.map((t) => (
+              <TypeBadge key={t} type={t} />
+            ))}
+          </div>
         </div>
       </div>
 

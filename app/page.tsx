@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Trash2, Package, Users } from "lucide-react";
+import { Trash2, Package, Users, Sparkles } from "lucide-react";
 import { useSave } from "@/components/save/save-provider";
 import { SaveDropzone } from "@/components/save/save-dropzone";
 import { MonCard } from "@/components/pokemon/mon-card";
 import { resolveMon } from "@/lib/pokemon/data";
+import { buildDemoSave } from "@/lib/pokemon/demo";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -13,13 +14,19 @@ export default function TeamPage() {
   const { data, dataError, save, setSave } = useSave();
   const [box, setBox] = useState(0);
 
-  const party = useMemo(
-    () => (save && data ? save.party.map((m) => resolveMon(m, data)) : []),
+  const isDemo = !save;
+  const active = useMemo(
+    () => save ?? (data ? buildDemoSave(data) : null),
     [save, data]
   );
+
+  const party = useMemo(
+    () => (active && data ? active.party.map((m) => resolveMon(m, data)) : []),
+    [active, data]
+  );
   const boxMons = useMemo(
-    () => (save && data ? save.boxes[box].map((m) => resolveMon(m, data)) : []),
-    [save, data, box]
+    () => (active && data ? active.boxes[box].map((m) => resolveMon(m, data)) : []),
+    [active, data, box]
   );
 
   if (dataError) {
@@ -31,38 +38,39 @@ export default function TeamPage() {
     );
   }
 
-  if (!save) {
-    return (
-      <div className="mx-auto max-w-2xl space-y-6 py-8">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold tracking-tight">Your Team & Boxes</h1>
-          <p className="mt-2 text-muted-foreground">
-            Load an Emerald save to read your party, PC boxes, natures, IVs, items and moves.
-          </p>
-        </div>
-        <SaveDropzone />
-      </div>
-    );
+  if (!active) {
+    return <div className="py-10 text-center text-muted-foreground">Loading…</div>;
   }
 
-  const totalBox = save.boxes.reduce((a, b) => a + b.length, 0);
+  const totalBox = active.boxes.reduce((a, b) => a + b.length, 0);
 
   return (
     <div className="space-y-8">
       {/* Trainer summary */}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card p-4">
         <div>
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">Trainer</div>
-          <div className="text-xl font-bold">{save.trainer.name || "—"}</div>
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+            Trainer
+            {isDemo && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                <Sparkles className="size-3" /> Demo team
+              </span>
+            )}
+          </div>
+          <div className="text-xl font-bold">{active.trainer.name || "—"}</div>
           <div className="text-sm text-muted-foreground">
-            ID {String(save.trainer.publicId).padStart(5, "0")} · {save.party.length} in party · {totalBox} in boxes
+            {isDemo
+              ? "Sample team — drop your .sav to load your own party & boxes."
+              : `ID ${String(active.trainer.publicId).padStart(5, "0")} · ${active.party.length} in party · ${totalBox} in boxes`}
           </div>
         </div>
         <div className="flex items-center gap-2">
           <SaveDropzone compact />
-          <Button variant="outline" size="sm" onClick={() => setSave(null)}>
-            <Trash2 className="size-4" /> Clear
-          </Button>
+          {!isDemo && (
+            <Button variant="outline" size="sm" onClick={() => setSave(null)}>
+              <Trash2 className="size-4" /> Clear
+            </Button>
+          )}
         </div>
       </div>
 
@@ -84,7 +92,7 @@ export default function TeamPage() {
           <Package className="size-5 text-primary" /> PC Boxes
         </h2>
         <div className="mb-4 flex flex-wrap gap-1.5">
-          {save.boxes.map((b, i) => (
+          {active.boxes.map((b, i) => (
             <button
               key={i}
               onClick={() => setBox(i)}

@@ -184,6 +184,92 @@ function resolveTypeToken(tok, depth = 0) {
   const anyType = t.match(/TYPE_\w+/);
   return anyType ? anyType[0] : t;
 }
+
+// --- Evolution parsing (brace-aware; expansion uses CONDITIONS({...},{...})) ---
+
+/** Return the content inside the balanced open/close pair starting at openIdx. */
+function balancedAt(str, openIdx, open, close) {
+  let depth = 0;
+  for (let i = openIdx; i < str.length; i++) {
+    if (str[i] === open) depth++;
+    else if (str[i] === close) {
+      depth--;
+      if (depth === 0) return str.slice(openIdx + 1, i);
+    }
+  }
+  return "";
+}
+
+/** Split `{a},{b}` into ["a","b"] at brace depth 0. */
+function splitTopTuples(s) {
+  const out = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "{") {
+      if (depth === 0) start = i + 1;
+      depth++;
+    } else if (s[i] === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        out.push(s.slice(start, i));
+        start = -1;
+      }
+    }
+  }
+  return out;
+}
+
+function conditionText(cond, param) {
+  const p = (param ?? "").trim();
+  switch (cond) {
+    case "IF_MIN_FRIENDSHIP": return "high friendship";
+    case "IF_KNOWS_MOVE_TYPE": return `knows a ${prettify(p, "TYPE_")}-type move`;
+    case "IF_KNOWS_MOVE": return `knows ${prettify(p, "MOVE_")}`;
+    case "IF_HOLD_ITEM": return `holding ${itemNames.get(p) ?? prettify(p, "ITEM_")}`;
+    case "IF_TIME": return /NIGHT/.test(p) ? "at night" : /DAY/.test(p) ? "during day" : prettify(p, "TIME_");
+    case "IF_NOT_TIME": return /NIGHT/.test(p) ? "during day" : "at night";
+    case "IF_IN_MAP": return `at ${prettify(p, "MAP_")}`;
+    case "IF_MIN_LEVEL": return `Lv ${p}`;
+    case "IF_GENDER": return /FEMALE/.test(p) ? "♀ only" : "♂ only";
+    case "IF_NATURE": return `${prettify(p, "NATURE_")} nature`;
+    case "IF_MIN_COOL": case "IF_MIN_BEAUTY": case "IF_MIN_CUTE":
+    case "IF_MIN_SMART": case "IF_MIN_TOUGH": return "high contest stat";
+    default: return prettify(cond, "IF_") + (p ? ` ${prettify(p, "")}` : "");
+  }
+}
+
+function evoRequirement(method, param, conditionsInner) {
+  const parts = [];
+  const p = param.trim();
+  if (method === "EVO_LEVEL") {
+    if (/^\d+$/.test(p) && Number(p) > 0) parts.push(`Lv ${p}`);
+  } else if (/^EVO_ITEM/.test(method)) {
+    parts.push(itemNames.get(p) ?? prettify(p, "ITEM_"));
+  } else if (method === "EVO_FRIENDSHIP") {
+    parts.push("high friendship");
+  } else if (method === "EVO_FRIENDSHIP_DAY") {
+    parts.push("friendship (day)");
+  } else if (method === "EVO_FRIENDSHIP_NIGHT") {
+    parts.push("friendship (night)");
+  } else if (method === "EVO_TRADE") {
+    parts.push("trade");
+  } else if (method === "EVO_TRADE_ITEM") {
+    parts.push(`trade holding ${itemNames.get(p) ?? prettify(p, "ITEM_")}`);
+  } else if (method === "EVO_MEGA_EVOLUTION" || method === "EVO_PRIMAL_REVERSION") {
+    parts.push(itemNames.get(p) ?? prettify(p, "ITEM_"));
+  } else {
+    const t = prettify(method, "EVO_");
+    parts.push(/^\d+$/.test(p) && Number(p) > 0 ? `${t} ${p}` : t);
+  }
+  if (conditionsInner) {
+    for (const c of splitTopTuples(conditionsInner)) {
+      const m = c.match(/^\s*(\w+)\s*(?:,\s*([\s\S]+))?$/);
+      if (m) parts.push(conditionText(m[1], m[2]));
+    }
+  }
+  return parts.filter(Boolean).join(" · ") || "Special";
+}
 const strField = (body, field) => {
   const m = body.match(
     new RegExp(`\\.${field}\\s*=\\s*(?:_|COMPOUND_STRING)\\(\\s*"([^"]*)"`)
@@ -196,6 +282,7 @@ const strField = (body, field) => {
 // ----------------------------------------------------------------------------
 
 const speciesEnum = parseEnum(read("include/constants/species.h"));
+const nationalDexEnum = parseEnum(read("include/constants/pokedex.h"));
 const moveEnum = parseEnum(read("include/constants/moves.h"));
 const abilityEnum = parseEnum(read("include/constants/abilities.h"));
 const itemEnum = parseEnum(read("include/constants/items.h"));
@@ -205,8 +292,11 @@ const itemEnum = parseEnum(read("include/constants/items.h"));
 // ----------------------------------------------------------------------------
 
 const abilityNames = new Map(); // constant -> display name
+const abilityDescs = new Map(); // constant -> description
 for (const { key, body } of splitBlocks(readOpt("src/data/abilities.h"), "ABILITY_")) {
   abilityNames.set(key, strField(body, "name") ?? prettify(key, "ABILITY_"));
+  const d = strField(body, "description");
+  if (d) abilityDescs.set(key, d.replace(/\s+/g, " ").trim());
 }
 
 const itemNames = new Map();
@@ -299,6 +389,8 @@ for (const file of speciesFiles) {
         .map((c) => (c === "ABILITY_NONE" ? null : abilityNames.get(c) ?? prettify(c, "ABILITY_")));
     }
     const abilityList = [...new Set(abilities.filter(Boolean))];
+    const hiddenAbility = abilities[2] ?? null;
+    const regularAbilities = [...new Set([abilities[0], abilities[1]].filter(Boolean))];
 
     const growthM = body.match(/\.growthRate\s*=\s*(GROWTH_\w+)/);
     const genderM = body.match(/\.genderRatio\s*=\s*([^,\n]+)/);
@@ -310,16 +402,24 @@ for (const file of speciesFiles) {
       else if (/MON_GENDERLESS/.test(g)) genderFemale = null;
     }
 
-    // evolutions: EVOLUTION({METHOD, param, SPECIES_X}, ...)
+    // evolutions: EVOLUTION({METHOD, param, SPECIES_X [, CONDITIONS({...},...)]}, ...)
     const evolutions = [];
-    const evoM = body.match(/\.evolutions\s*=\s*EVOLUTION\(([\s\S]*?)\)\s*,/);
-    if (evoM) {
-      for (const tup of evoM[1].matchAll(/\{\s*(\w+)\s*,\s*([^,]+?)\s*,\s*(SPECIES_\w+)/g)) {
+    const evoStart = body.search(/\.evolutions\s*=\s*EVOLUTION\s*\(/);
+    if (evoStart >= 0) {
+      const openIdx = body.indexOf("(", evoStart);
+      const content = balancedAt(body, openIdx, "(", ")").replace(/^\s*#.*$/gm, "");
+      for (const tup of splitTopTuples(content)) {
+        const m = tup.match(/^\s*(EVO_\w+)\s*,\s*([^,]+?)\s*,\s*(SPECIES_\w+)([\s\S]*)$/);
+        if (!m) continue;
+        const [, method, rawParam, sp, rest] = m;
+        const condM = rest.match(/CONDITIONS\s*\(/);
+        let conditionsInner = "";
+        if (condM) conditionsInner = balancedAt(rest, rest.indexOf("(", condM.index), "(", ")");
         evolutions.push({
-          method: prettify(tup[1], "EVO_"),
-          param: tup[2].trim(),
-          to: speciesEnum.nameToId.get(tup[3]) ?? null,
-          toName: prettify(tup[3], "SPECIES_"),
+          method: prettify(method, "EVO_"),
+          to: speciesEnum.nameToId.get(sp) ?? null,
+          toName: prettify(sp, "SPECIES_"),
+          requirement: evoRequirement(method, rawParam.trim(), conditionsInner),
         });
       }
     }
@@ -337,10 +437,15 @@ for (const file of speciesFiles) {
       id,
       key,
       name,
-      natDex: numField(body, "natDexNum") || null,
+      natDex: (() => {
+        const m = body.match(/\.natDexNum\s*=\s*(NATIONAL_DEX_\w+)/);
+        return m ? nationalDexEnum.nameToId.get(m[1]) ?? null : null;
+      })(),
       types,
       abilities,
       abilityList,
+      regularAbilities,
+      hiddenAbility,
       baseStats: {
         hp: numField(body, "baseHP"),
         atk: numField(body, "baseAttack"),
@@ -370,7 +475,11 @@ species.sort((a, b) => a.id - b.id);
 const abilities = {};
 for (const [name, id] of abilityEnum.nameToId) {
   if (abilities[id]) continue;
-  abilities[id] = { id, name: abilityNames.get(name) ?? prettify(name, "ABILITY_") };
+  abilities[id] = {
+    id,
+    name: abilityNames.get(name) ?? prettify(name, "ABILITY_"),
+    description: abilityDescs.get(name) ?? "",
+  };
 }
 
 const items = {};
@@ -397,6 +506,110 @@ const NATURES = [
 const natures = NATURES.map(([name, plus, minus], id) => ({ id, name, plus, minus }));
 
 // ----------------------------------------------------------------------------
+// Trainers (src/data/trainers.party — Showdown-style text) for the calculator
+// ----------------------------------------------------------------------------
+
+const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+
+// name/constant -> id lookups
+const speciesLookup = new Map();
+for (const s of species) {
+  speciesLookup.set(norm(s.name), s.id);
+  speciesLookup.set(norm(s.key.replace(/^SPECIES_/, "")), s.id);
+}
+const moveLookup = new Map();
+for (const m of Object.values(moves)) {
+  moveLookup.set(norm(m.name), m.id);
+  moveLookup.set(norm(m.key.replace(/^MOVE_/, "")), m.id);
+}
+const itemLookup = new Map();
+for (const [name, id] of itemEnum.nameToId) {
+  itemLookup.set(norm(name.replace(/^ITEM_/, "")), id);
+  const disp = itemNames.get(name);
+  if (disp) itemLookup.set(norm(disp), id);
+}
+const abilityLookup = new Map();
+for (const [name, id] of abilityEnum.nameToId) {
+  abilityLookup.set(norm(name.replace(/^ABILITY_/, "")), id);
+  const disp = abilityNames.get(name);
+  if (disp) abilityLookup.set(norm(disp), id);
+}
+const natureLookup = new Map(natures.map((n) => [norm(n.name), n.id]));
+
+function parseTrainerMon(lines) {
+  let first = lines[0];
+  let item = null;
+  const at = first.split("@");
+  if (at.length > 1) {
+    item = itemLookup.get(norm(at[1])) ?? null;
+    first = at[0].trim();
+  }
+  first = first.replace(/\((?:M|F)\)/g, "").trim();
+  const paren = first.match(/\(([^)]+)\)\s*$/);
+  const speciesTok = paren ? paren[1].trim() : first.trim();
+  const speciesId = speciesLookup.get(norm(speciesTok));
+  if (speciesId === undefined) return null;
+
+  const mon = { species: speciesId, level: 100, ability: null, item, moves: [], nature: 0, shiny: false };
+  for (const l of lines.slice(1)) {
+    const mv = l.match(/^-\s*(.+)$/);
+    if (mv) {
+      const id = moveLookup.get(norm(mv[1]));
+      if (id !== undefined) mon.moves.push(id);
+      continue;
+    }
+    const kv = l.match(/^([A-Za-z ]+):\s*(.*)$/);
+    if (!kv) continue;
+    const k = kv[1].trim().toLowerCase();
+    const v = kv[2].trim();
+    if (k === "level") mon.level = parseInt(v, 10) || mon.level;
+    else if (k === "ability") mon.ability = abilityLookup.get(norm(v)) ?? null;
+    else if (k === "nature") mon.nature = natureLookup.get(norm(v)) ?? 0;
+    else if (k === "shiny") mon.shiny = /yes/i.test(v);
+  }
+  return mon;
+}
+
+function parseTrainers(text) {
+  const out = [];
+  const parts = text.split(/^=== (TRAINER_\w+) ===\s*$/m);
+  for (let i = 1; i < parts.length; i += 2) {
+    const id = parts[i];
+    if (id === "TRAINER_NONE") continue;
+    const lines = parts[i + 1].split("\n");
+    const header = {};
+    let idx = 0;
+    for (; idx < lines.length; idx++) {
+      const l = lines[idx].trim();
+      if (l === "") { idx++; break; }
+      const m = l.match(/^([A-Za-z ]+):\s*(.*)$/);
+      if (m) header[m[1].trim().toLowerCase()] = m[2].trim();
+    }
+    const chunks = [];
+    let cur = [];
+    for (; idx < lines.length; idx++) {
+      const l = lines[idx].trim();
+      if (l === "") { if (cur.length) { chunks.push(cur); cur = []; } continue; }
+      cur.push(l);
+    }
+    if (cur.length) chunks.push(cur);
+    const party = chunks.map(parseTrainerMon).filter(Boolean);
+    if (party.length === 0) continue;
+    out.push({
+      id,
+      name: header["name"] || prettify(id, "TRAINER_"),
+      trainerClass: header["class"] || "",
+      pic: header["pic"] || "",
+      double: /yes/i.test(header["double battle"] || ""),
+      party,
+    });
+  }
+  return out;
+}
+
+const trainers = parseTrainers(readOpt("src/data/trainers.party"));
+
+// ----------------------------------------------------------------------------
 // Write output
 // ----------------------------------------------------------------------------
 
@@ -421,6 +634,7 @@ const meta = {
     moves: Object.keys(moves).length,
     abilities: Object.keys(abilities).length,
     items: Object.keys(items).length,
+    trainers: trainers.length,
   },
 };
 
@@ -433,6 +647,7 @@ writeJson("moves.json", moves);
 writeJson("abilities.json", abilities);
 writeJson("items.json", items);
 writeJson("natures.json", natures);
+writeJson("trainers.json", trainers);
 
 console.log("[extract] wrote", OUT);
 console.table(meta.counts);

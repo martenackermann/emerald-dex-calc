@@ -8,10 +8,13 @@
     "start": "next start",
     "lint": "eslint",
     "extract": "node scripts/extract-data.mjs",
+    "extract:sprites": "node scripts/extract-sprites.mjs",
+    "extract:all": "node scripts/extract-data.mjs && node scripts/extract-sprites.mjs",
     "test": "vitest run"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
+    "@tanstack/react-virtual": "^3.14.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.24.0",
@@ -31,6 +34,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "pngjs": "^7.0.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite-tsconfig-paths": "^6.1.1",
