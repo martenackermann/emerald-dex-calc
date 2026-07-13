@@ -32,7 +32,12 @@ export interface Species {
   weight: number;
   description: string | null;
   evolutions: { method: string; to: number | null; toName: string; requirement: string }[];
-  learnset: number[];
+  levelUpMoves: { level: number; move: number }[];
+  tmMoves: number[];
+  isForm: boolean;
+  formName: string | null;
+  baseSpecies: number | null;
+  forms: { id: number; name: string; label: string }[];
 }
 
 export interface Move {

@@ -92,10 +92,24 @@ export function buildAttackerFromSave(mon: DecodedMon, species: Species, nature:
   };
 }
 
-export function calcMove(attacker: Combatant, defender: Combatant, move: Move, level: number): DamageResult | null {
+/** Stat-stage multiplier (−6…+6), as used for in-battle boosts/drops. */
+export function boostMultiplier(stage: number): number {
+  const s = Math.max(-6, Math.min(6, stage));
+  return s >= 0 ? (2 + s) / 2 : 2 / (2 - s);
+}
+
+export function calcMove(
+  attacker: Combatant,
+  defender: Combatant,
+  move: Move,
+  level: number,
+  opts: { atkBoost?: number; defBoost?: number } = {}
+): DamageResult | null {
   if (move.category === "Status" || move.power <= 0) return null;
-  const A = move.category === "Physical" ? attacker.stats.atk : attacker.stats.spa;
-  const D = move.category === "Physical" ? defender.stats.def : defender.stats.spd;
+  const A0 = move.category === "Physical" ? attacker.stats.atk : attacker.stats.spa;
+  const D0 = move.category === "Physical" ? defender.stats.def : defender.stats.spd;
+  const A = Math.floor(A0 * boostMultiplier(opts.atkBoost ?? 0));
+  const D = Math.max(1, Math.floor(D0 * boostMultiplier(opts.defBoost ?? 0)));
   const base = Math.floor(Math.floor((Math.floor((2 * level) / 5 + 2) * move.power * A) / D) / 50) + 2;
 
   const stab = attacker.types.includes(move.type);

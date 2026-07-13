@@ -37,7 +37,7 @@ export function buildDemoSave(data: GameData): ParsedSave {
     const species = data.species.find((s) => s.name === spec.name);
     if (!species) continue;
     let moves = spec.moves.map((mn) => moveByName.get(mn.toLowerCase())).filter((x): x is number => x != null);
-    if (moves.length === 0) moves = species.learnset.slice(0, 4);
+    if (moves.length === 0) moves = species.levelUpMoves.map((m) => m.move).slice(-4);
     moves = moves.slice(0, 4);
 
     party.push({

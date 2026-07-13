@@ -53,7 +53,7 @@ export default function DexPage() {
   const results = useMemo(() => {
     if (!data) return [];
     const query = q.trim().toLowerCase();
-    let list = data.species.filter((s) => s.id > 0 && s.name && s.name !== "??????????");
+    let list = data.species.filter((s) => s.id > 0 && s.name && s.name !== "??????????" && !s.isForm);
     if (ownedOnly) list = list.filter((s) => overlay.has(s.id));
     if (types.size) list = list.filter((s) => s.types.some((t) => types.has(t)));
     if (gen !== "all") {

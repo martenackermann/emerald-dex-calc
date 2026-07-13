@@ -62,10 +62,41 @@ function SpeciesDialogBody({
     return m;
   }, [data]);
 
-  const preEvos = useMemo(
-    () => data.species.filter((s) => s.evolutions.some((e) => e.to === species.id)),
-    [data, species.id]
-  );
+  // Full evolution family: walk back to the root, then collect every edge forward.
+  const family = useMemo(() => {
+    const byId = data.speciesById;
+    let root = species;
+    const seen = new Set<number>([species.id]);
+    for (;;) {
+      const pre = data.species.find((s) => !s.isForm && s.evolutions.some((e) => e.to === root.id));
+      if (!pre || seen.has(pre.id)) break;
+      seen.add(pre.id);
+      root = pre;
+    }
+    const edges: { from: Species; to: Species; requirement: string }[] = [];
+    const members = new Map<number, Species>();
+    const visited = new Set<number>();
+    const queue = [root];
+    while (queue.length) {
+      const s = queue.shift()!;
+      if (visited.has(s.id)) continue;
+      visited.add(s.id);
+      members.set(s.id, s);
+      for (const e of s.evolutions) {
+        if (e.to == null) continue;
+        const to = byId.get(e.to);
+        if (!to) continue;
+        edges.push({ from: s, to, requirement: e.requirement });
+        members.set(to.id, to);
+        queue.push(to);
+      }
+    }
+    // Forms available anywhere in the family (Mega/Gmax/…)
+    const forms = [...members.values()]
+      .filter((s) => s.forms.length > 0)
+      .map((s) => ({ owner: s, forms: s.forms }));
+    return { edges, forms };
+  }, [data, species]);
 
   return (
     <>
@@ -95,7 +126,7 @@ function SpeciesDialogBody({
       <Tabs defaultValue="info" className="gap-0">
         <TabsList className="w-full justify-start rounded-none border-b bg-transparent px-3">
           <TabsTrigger value="info">Info</TabsTrigger>
-          <TabsTrigger value="moves">Moves ({species.learnset.length})</TabsTrigger>
+          <TabsTrigger value="moves">Moves</TabsTrigger>
           <TabsTrigger value="evo">Evolutions</TabsTrigger>
         </TabsList>
 
@@ -123,64 +154,86 @@ function SpeciesDialogBody({
             {ownedInfo && <RandomizerPanel species={species} info={ownedInfo} data={data} />}
           </TabsContent>
 
-          {/* MOVES */}
+          {/* MOVES — split into level-up (with levels) and TM/Tutor */}
           <TabsContent value="moves" className="mt-0">
-            <div className="overflow-hidden rounded-lg border">
-              {species.learnset.length === 0 && (
-                <div className="p-4 text-sm text-muted-foreground">No learnset data.</div>
-              )}
-              {species.learnset.map((id, i) => {
-                const mv = data.moveById.get(id);
-                if (!mv) return null;
-                return (
-                  <div
-                    key={id}
-                    className={cn(
-                      "flex items-center gap-2 px-3 py-1.5 text-sm",
-                      i % 2 === 0 && "bg-muted/30"
-                    )}
-                  >
-                    <span className="min-w-36 flex-1 truncate font-medium">{mv.name}</span>
-                    <TypeBadge type={mv.type} className="px-1.5 py-0 text-[10px]" />
-                    <span className="w-16 text-right text-xs text-muted-foreground">{mv.category}</span>
-                    <span className="w-12 text-right text-xs tabular-nums text-muted-foreground">
-                      {mv.power || "—"}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+            <Tabs defaultValue="level">
+              <TabsList className="mb-2">
+                <TabsTrigger value="level">Level ({species.levelUpMoves.length})</TabsTrigger>
+                <TabsTrigger value="tm">TM / Tutor ({species.tmMoves.length})</TabsTrigger>
+              </TabsList>
+              <TabsContent value="level" className="mt-0">
+                <MoveList
+                  data={data}
+                  rows={species.levelUpMoves.map((m) => ({ level: m.level, move: m.move }))}
+                  showLevel
+                />
+              </TabsContent>
+              <TabsContent value="tm" className="mt-0">
+                <MoveList
+                  data={data}
+                  rows={species.tmMoves
+                    .map((id) => ({ move: id }))
+                    .sort((a, b) => (data.moveById.get(a.move)?.name ?? "").localeCompare(data.moveById.get(b.move)?.name ?? ""))}
+                />
+              </TabsContent>
+            </Tabs>
           </TabsContent>
 
-          {/* EVOLUTIONS */}
+          {/* EVOLUTIONS — full family + battle forms */}
           <TabsContent value="evo" className="mt-0 space-y-4">
-            {preEvos.length === 0 && species.evolutions.length === 0 && (
+            {family.edges.length === 0 && family.forms.length === 0 && (
               <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
                 {species.name} does not evolve.
               </div>
             )}
-            {preEvos.map((pre) => {
-              const via = pre.evolutions.find((e) => e.to === species.id);
-              return (
-                <EvoRow
-                  key={`pre-${pre.id}`}
-                  from={pre}
-                  to={species}
-                  requirement={via?.requirement ?? ""}
-                  onSelect={onSelectSpecies}
-                />
-              );
-            })}
-            {species.evolutions.map((e, i) =>
-              e.to != null ? (
-                <EvoRow
-                  key={`evo-${i}`}
-                  from={species}
-                  to={data.speciesById.get(e.to) ?? { id: e.to, name: e.toName } as Species}
-                  requirement={e.requirement}
-                  onSelect={onSelectSpecies}
-                />
-              ) : null
+            {family.edges.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold">Evolution line</h3>
+                {family.edges.map((e, i) => (
+                  <EvoRow
+                    key={i}
+                    from={e.from}
+                    to={e.to}
+                    requirement={e.requirement}
+                    current={species.id}
+                    onSelect={onSelectSpecies}
+                  />
+                ))}
+              </div>
+            )}
+            {species.isForm && species.baseSpecies != null && (
+              <button
+                onClick={() => onSelectSpecies(species.baseSpecies!)}
+                className="flex w-full items-center gap-2 rounded-lg border bg-card p-2 text-left text-sm hover:border-primary/60"
+              >
+                <Sprite speciesId={species.baseSpecies} size={40} />
+                <span>
+                  <span className="text-amber-500">{species.formName}</span> form of{" "}
+                  <span className="font-medium">{data.speciesById.get(species.baseSpecies)?.name}</span> — view base
+                </span>
+              </button>
+            )}
+            {family.forms.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold">Other forms</h3>
+                {family.forms.map(({ owner, forms }) => (
+                  <div key={owner.id} className="rounded-lg border bg-card p-2">
+                    <div className="mb-1 text-xs text-muted-foreground">{owner.name}</div>
+                    <div className="flex flex-wrap gap-2">
+                      {forms.map((f) => (
+                        <button
+                          key={f.id}
+                          onClick={() => onSelectSpecies(f.id)}
+                          className="flex w-24 flex-col items-center rounded-md p-1 transition-colors hover:bg-muted"
+                        >
+                          <Sprite speciesId={f.id} size={44} />
+                          <span className="mt-0.5 text-center text-[11px] font-medium text-amber-500">{f.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </TabsContent>
         </div>
@@ -241,34 +294,77 @@ function EvoRow({
   from,
   to,
   requirement,
+  current,
   onSelect,
 }: {
   from: Species;
   to: Species;
   requirement: string;
+  current?: number;
   onSelect: (id: number) => void;
 }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border bg-card p-2">
-      <EvoMon s={from} onSelect={onSelect} />
+      <EvoMon s={from} onSelect={onSelect} active={from.id === current} />
       <div className="flex flex-1 flex-col items-center text-center">
         <ArrowRight className="size-4 text-muted-foreground" />
         <span className="mt-0.5 text-[11px] leading-tight text-muted-foreground">{requirement}</span>
       </div>
-      <EvoMon s={to} onSelect={onSelect} />
+      <EvoMon s={to} onSelect={onSelect} active={to.id === current} />
     </div>
   );
 }
 
-function EvoMon({ s, onSelect }: { s: Species; onSelect: (id: number) => void }) {
+function EvoMon({ s, active, onSelect }: { s: Species; active?: boolean; onSelect: (id: number) => void }) {
   return (
     <button
       onClick={() => onSelect(s.id)}
-      className="flex w-20 shrink-0 flex-col items-center rounded-md p-1 transition-colors hover:bg-muted"
+      className={cn(
+        "flex w-20 shrink-0 flex-col items-center rounded-md p-1 transition-colors hover:bg-muted",
+        active && "bg-primary/10 ring-1 ring-primary/40"
+      )}
     >
       <Sprite speciesId={s.id} alt={s.name} size={48} />
       <span className="mt-0.5 truncate text-xs font-medium">{s.name}</span>
     </button>
+  );
+}
+
+function MoveList({
+  data,
+  rows,
+  showLevel,
+}: {
+  data: GameData;
+  rows: { level?: number; move: number }[];
+  showLevel?: boolean;
+}) {
+  if (rows.length === 0) {
+    return <div className="rounded-lg border p-4 text-sm text-muted-foreground">No moves.</div>;
+  }
+  return (
+    <div className="overflow-hidden rounded-lg border">
+      {rows.map((r, i) => {
+        const mv = data.moveById.get(r.move);
+        if (!mv) return null;
+        return (
+          <div
+            key={`${r.move}-${i}`}
+            className={cn("flex items-center gap-2 px-3 py-1.5 text-sm", i % 2 === 0 && "bg-muted/30")}
+          >
+            {showLevel && (
+              <span className="w-8 shrink-0 text-right text-xs font-semibold tabular-nums text-muted-foreground">
+                {r.level === 0 ? "Evo" : r.level}
+              </span>
+            )}
+            <span className="min-w-28 flex-1 truncate font-medium">{mv.name}</span>
+            <TypeBadge type={mv.type} className="px-1.5 py-0 text-[10px]" />
+            <span className="hidden w-16 text-right text-xs text-muted-foreground sm:inline">{mv.category}</span>
+            <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">{mv.power || "—"}</span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

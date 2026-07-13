@@ -315,6 +315,46 @@ try {
   learnables = {};
 }
 
+// Level-up learnsets (array name -> [{ level, move id }]). Each gen file redefines
+// the same array names; the hack compiles the one set by P_LVL_UP_LEARNSETS.
+const levelUpByArray = new Map();
+{
+  // resolve the configured generation (e.g. GEN_LATEST -> GEN_9 -> gen_9.h)
+  const genDefs = new Map();
+  for (const m of readOpt("include/config/general.h").matchAll(/^#define\s+(GEN_\w+)\s+(.+?)\s*$/gm)) {
+    const v = m[2].trim();
+    genDefs.set(m[1], /^\d+$/.test(v) ? parseInt(v, 10) : genDefs.get(v) ?? null);
+  }
+  const cm = readOpt("include/config/pokemon.h").match(/#define\s+P_LVL_UP_LEARNSETS\s+(\w+)/);
+  const raw = cm ? cm[1] : "GEN_LATEST";
+  const genIdx = /^\d+$/.test(raw) ? parseInt(raw, 10) : genDefs.get(raw) ?? 8;
+  const file = `src/data/pokemon/level_up_learnsets/gen_${genIdx + 1}.h`;
+  const text = existsSync(join(ROM, file)) ? read(file) : "";
+  const re = /const struct LevelUpMove (\w+)\[\]\s*=\s*\{([\s\S]*?)\};/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const moves = [];
+    for (const t of m[2].matchAll(/LEVEL_UP_MOVE\(\s*(\d+)\s*,\s*(MOVE_\w+)\s*\)/g)) {
+      const id = moveEnum.nameToId.get(t[2]);
+      if (id !== undefined) moves.push({ level: parseInt(t[1], 10), move: id });
+    }
+    levelUpByArray.set(m[1], moves);
+  }
+}
+
+// Battle forms (Mega / Gmax / Primal) — hidden from the dex grid, shown under the
+// base species' Evolutions tab. Detected by key suffix; base = key without suffix.
+const BATTLE_FORM_RE = /_(MEGA(_X|_Y)?|GMAX|PRIMAL|ETERNAMAX)$/;
+function formLabel(key) {
+  const m = key.match(BATTLE_FORM_RE);
+  if (!m) return null;
+  const s = m[1];
+  if (s === "GMAX") return "Gigantamax";
+  if (s === "PRIMAL") return "Primal";
+  if (s === "ETERNAMAX") return "Eternamax";
+  return prettify(s, ""); // Mega / Mega X / Mega Y
+}
+
 // ----------------------------------------------------------------------------
 // Moves
 // ----------------------------------------------------------------------------
@@ -426,9 +466,19 @@ for (const file of speciesFiles) {
 
     const shortName = key.replace(/^SPECIES_/, "");
     const learnKeys = learnables[shortName] ?? [];
-    const learnset = learnKeys
+    const allLearn = learnKeys
       .map((c) => moveEnum.nameToId.get(c))
       .filter((n) => n !== undefined);
+
+    // Level-up moves (with the level they're learned at)
+    const luArr = body.match(/\.levelUpLearnset\s*=\s*(\w+)/);
+    const levelUpMoves = (luArr && levelUpByArray.get(luArr[1])) || [];
+    // TM / Tutor = everything learnable that isn't a level-up move
+    const luIds = new Set(levelUpMoves.map((m) => m.move));
+    const tmMoves = [...new Set(allLearn.filter((id) => !luIds.has(id)))];
+
+    const isForm = BATTLE_FORM_RE.test(key);
+    const baseKey = isForm ? key.replace(BATTLE_FORM_RE, "") : null;
 
     const name = strField(body, "speciesName") ?? prettify(key, "SPECIES_");
     const desc = strField(body, "description");
@@ -462,11 +512,27 @@ for (const file of speciesFiles) {
       weight: numField(body, "weight"), // hectograms
       description: desc ? desc.replace(/\s+/g, " ").trim() : null,
       evolutions,
-      learnset,
+      levelUpMoves,
+      tmMoves,
+      isForm,
+      formName: isForm ? formLabel(key) : null,
+      baseSpecies: baseKey ? speciesEnum.nameToId.get(baseKey) ?? null : null,
+      forms: [], // filled below
     });
   }
 }
 species.sort((a, b) => a.id - b.id);
+
+// Attach each base species' battle forms (Mega/Gmax/Primal) for the Evolutions tab.
+{
+  const byId = new Map(species.map((s) => [s.id, s]));
+  for (const s of species) {
+    if (s.isForm && s.baseSpecies != null) {
+      const base = byId.get(s.baseSpecies);
+      if (base) base.forms.push({ id: s.id, name: base.name, label: s.formName });
+    }
+  }
+}
 
 // ----------------------------------------------------------------------------
 // Abilities & items maps (id -> {id,name})
