@@ -9,7 +9,8 @@
     "lint": "eslint",
     "extract": "node scripts/extract-data.mjs",
     "extract:sprites": "node scripts/extract-sprites.mjs",
-    "extract:all": "node scripts/extract-data.mjs && node scripts/extract-sprites.mjs",
+    "extract:all": "node scripts/extract-data.mjs && node scripts/extract-sprites.mjs && node scripts/make-sample-save.mjs",
+    "make:sav": "node scripts/make-sample-save.mjs",
     "test": "vitest run"
   },
   "dependencies": {

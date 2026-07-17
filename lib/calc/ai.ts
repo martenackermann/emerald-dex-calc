@@ -8,7 +8,7 @@
 //   - CHECK_BAD_MOVE: avoid no-effect / status-only; flatter otherwise.
 //   - RISKY: prefer raw damage.
 
-import { calc, type Combatant, type Field } from "@/lib/calc/damage";
+import { calc, typeEffectiveness, type Combatant, type Field } from "@/lib/calc/damage";
 import type { GameData, Move } from "@/lib/pokemon/data";
 
 export interface MovePrediction {
@@ -67,4 +67,102 @@ export function predictAiMoves(
   return scored
     .map((s, i) => ({ move: s.move, likelihood: exps[i] / sum, maxPct: s.maxPct, ko: s.ko }))
     .sort((a, b) => b.likelihood - a.likelihood);
+}
+
+// ---------------------------------------------------------------------------
+// Post-KO switch-in prediction — port of GetMostSuitableMonToSwitchInto
+// (src/battle_ai_switch.c:2586). Paths:
+//   Sequence Switching  -> first alive mon in party order       (:2561)
+//   default (vanilla)   -> GetBestMonVanilla                     (:2461)
+//     Baton Pass > type matchup (resists us AND hits us super-
+//     effectively; lowest defensive matchup wins) > best damage
+//     > any valid; Ace Pokemon (last slot) only as a last resort.
+// (Smart Mon Choices' integrated scoring is approximated by vanilla here.)
+// ---------------------------------------------------------------------------
+
+export interface SwitchCandidate {
+  combatant: Combatant;
+  curHp: number;
+  moveIds: number[];
+  level: number;
+}
+
+export interface SwitchPrediction {
+  index: number;
+  reason: string;
+}
+
+export function predictSwitchIn(
+  data: GameData,
+  team: SwitchCandidate[],
+  deadIndex: number,
+  playerMon: Combatant,
+  playerCurHp: number,
+  field: Field,
+  flags: string[]
+): SwitchPrediction | null {
+  const aliveIdx = team
+    .map((c, i) => ({ c, i }))
+    .filter(({ c, i }) => i !== deadIndex && c.curHp > 0);
+  if (aliveIdx.length === 0) return null;
+
+  if (has(flags, "Sequence")) {
+    return { index: aliveIdx[0].i, reason: "next in party order (Sequence Switching)" };
+  }
+
+  // Ace Pokemon: last party slot is held back until it's the only one left
+  const aceIndex = has(flags, "Ace") ? team.length - 1 : -1;
+  let pool = aliveIdx.filter(({ i }) => i !== aceIndex);
+  if (pool.length === 0) {
+    return { index: aliveIdx[0].i, reason: "ace Pokémon — last one standing" };
+  }
+
+  // 1) Baton Pass holder
+  for (const { c, i } of pool) {
+    if (c.moveIds.some((id) => data.moveById.get(id)?.name === "Baton Pass")) {
+      return { index: i, reason: "has Baton Pass" };
+    }
+  }
+
+  // 2) Type matchup: takes <2x from the player's types AND has a >=2x move
+  let bestResist = 2.0;
+  let bestMatchIdx = -1;
+  for (const { c, i } of pool) {
+    // how hard the player's typing hits this candidate (product over player types)
+    const matchup = playerMon.types.reduce(
+      (m, t) => m * typeEffectiveness(t, c.combatant.types),
+      1
+    );
+    const hasSE = c.moveIds.some((id) => {
+      const mv = data.moveById.get(id);
+      return mv && mv.power > 0 && typeEffectiveness(mv.type, playerMon.types) >= 2;
+    });
+    if (hasSE && matchup < bestResist) {
+      bestResist = matchup;
+      bestMatchIdx = i;
+    }
+  }
+  if (bestMatchIdx >= 0) {
+    return { index: bestMatchIdx, reason: "type matchup — resists you & hits super-effectively" };
+  }
+
+  // 3) Best single-move damage vs the player's active mon
+  let bestDmg = 0;
+  let bestDmgIdx = -1;
+  for (const { c, i } of pool) {
+    for (const id of c.moveIds) {
+      const mv = data.moveById.get(id);
+      if (!mv || mv.power <= 0) continue;
+      const r = calc(c.combatant, playerMon, mv, c.level, field);
+      if (r && r.max > bestDmg) {
+        bestDmg = r.max;
+        bestDmgIdx = i;
+      }
+    }
+  }
+  if (bestDmgIdx >= 0) {
+    return { index: bestDmgIdx, reason: "highest damage against your active Pokémon" };
+  }
+
+  return { index: pool[0].i, reason: "first valid party member" };
 }

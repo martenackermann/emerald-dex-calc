@@ -147,6 +147,56 @@ export interface DamageResult {
   koText: string;
 }
 
+// ---- turn order -------------------------------------------------------------
+
+const WEATHER_SPEED_ABILITY: Record<string, Weather> = {
+  "Swift Swim": "rain",
+  Chlorophyll: "sun",
+  "Sand Rush": "sand",
+  "Slush Rush": "snow",
+};
+
+/** In-battle speed: stat × boost stage × paralysis × Choice Scarf × weather abilities. */
+export function effectiveSpeed(c: Combatant, field: Field): number {
+  let spe = Math.floor(c.stats.spe * boostMultiplier(c.boosts.spe));
+  if (WEATHER_SPEED_ABILITY[c.ability] === field.weather) spe *= 2;
+  if (c.ability === "Quick Feet" && c.status !== "healthy") spe = Math.floor(spe * 1.5);
+  else if (c.status === "par") spe = Math.floor(spe / 2);
+  if (c.item === "Choice Scarf") spe = Math.floor(spe * 1.5);
+  if (c.item === "Iron Ball") spe = Math.floor(spe / 2);
+  return spe;
+}
+
+/**
+ * Sturdy / Focus Sash: a defender at FULL HP survives a lethal hit with 1 HP.
+ * `curHp`/`maxHp` are actual hit points. Returns the HP after the hit + flags.
+ */
+export function applyHit(
+  defender: Combatant,
+  curHp: number,
+  maxHp: number,
+  dmg: number
+): { hp: number; hungOn: boolean; via: string | null } {
+  if (dmg < curHp) return { hp: curHp - dmg, hungOn: false, via: null };
+  const atFull = curHp >= maxHp;
+  if (atFull && defender.ability === "Sturdy") return { hp: 1, hungOn: true, via: "Sturdy" };
+  if (atFull && defender.item === "Focus Sash") return { hp: 1, hungOn: true, via: "Focus Sash" };
+  return { hp: 0, hungOn: false, via: null };
+}
+
+/** Would this hit KO — or does Sturdy/Sash keep the defender at 1 HP? */
+export function koOutcome(
+  defender: Combatant,
+  curHp: number,
+  maxHp: number,
+  maxDmg: number
+): "ko" | "hangs-on" | "survives" {
+  if (maxDmg < curHp) return "survives";
+  const atFull = curHp >= maxHp;
+  if (atFull && (defender.ability === "Sturdy" || defender.item === "Focus Sash")) return "hangs-on";
+  return "ko";
+}
+
 function koText(minPct: number, maxPct: number): string {
   if (minPct >= 100) return "guaranteed OHKO";
   if (maxPct >= 100) return "possible OHKO";
