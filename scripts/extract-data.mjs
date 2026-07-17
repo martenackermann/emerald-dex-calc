@@ -645,6 +645,7 @@ function parseTrainers(text) {
     const lines = parts[i + 1].split("\n");
     const header = {};
     let idx = 0;
+    while (idx < lines.length && lines[idx].trim() === "") idx++; // skip leading blank(s)
     for (; idx < lines.length; idx++) {
       const l = lines[idx].trim();
       if (l === "") { idx++; break; }
@@ -667,6 +668,7 @@ function parseTrainers(text) {
       trainerClass: header["class"] || "",
       pic: header["pic"] || "",
       double: /yes/i.test(header["double battle"] || ""),
+      ai: (header["ai"] || "").split("/").map((s) => s.trim()).filter(Boolean),
       party,
     });
   }

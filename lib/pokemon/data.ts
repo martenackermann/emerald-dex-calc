@@ -176,6 +176,7 @@ export interface Trainer {
   trainerClass: string;
   pic: string;
   double: boolean;
+  ai: string[];
   party: TrainerMon[];
 }
 
